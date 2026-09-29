@@ -13,7 +13,8 @@ How it works, in order:
 4. Walk the body lines: a bold "n-n." starts a paragraph, a bold WARNING/
    CAUTION/NOTE starts a warning chunk inside it. Paragraphs over 800 words
    are split at their bold "a." / "b." labels.
-5. Tables (pdfplumber grid, else rows of lines) and figures (caption plus any
+5. Tables (rows of lines grouped by position; pdfplumber's ruled-cell grids
+   dropped headers and whole columns on this PDF) and figures (caption plus any
    label text) become their own chunks.
 6. Pull refs_out and specs by regex, add hand fixes from ref_overrides.yaml.
 
@@ -28,7 +29,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import pdfplumber
 import pymupdf
 import yaml
 
@@ -44,7 +44,7 @@ DUP_PAGES = set(range(67, 76))    # PDF pp 67-75 repeat pp 58-66
 HEADER_Y, FOOTER_Y = 64, 737      # header/footer strips (points from top)
 SPLIT_WORDS = 800                 # split longer paragraphs at "a." / "b." labels
 
-DASHES = {"": "–", "￧": "–"}   # private-use range dashes in this PDF
+DASHES = {"\uf8e7": "–", "\uffe7": "–"}   # private-use range dashes in this PDF
 
 
 def clean(s: str) -> str:
@@ -60,13 +60,14 @@ def join_lines(lines: list[str]) -> str:
         ln = ln.strip()
         if not ln:
             continue
-        if out.endswith("­"):
+        if out.endswith("\u00ad"):
             out = out[:-1] + ln
         elif out.endswith("-") and ln[:1].islower():
             out += ln
         else:
             out = f"{out} {ln}" if out else ln
-    return re.sub(r"\s+", " ", out.replace("­", "")).strip()
+    out = re.sub(r"-{4,}", " ", out.replace("\u00ad", ""))   # dot-leader dashes
+    return re.sub(r"\s+", " ", out).strip()
 
 
 # ---------------------------------------------------------------- lines
@@ -101,7 +102,7 @@ def page_lines(page, pno: int) -> tuple[list[Line], dict]:
             text = clean("".join(s["text"] for s in l["spans"]))
             x0, y0, x1, y1 = l["bbox"]
             if y1 < HEADER_Y or y0 > FOOTER_Y:
-                if m := re.search(r"\bPage\s+(\S+)", text):
+                if m := re.search(r"\bPages?\s+(\S+)", text):
                     meta["label"] = m.group(1)
                 if "CHG 1" in text:
                     meta["chg1"] = True
@@ -135,7 +136,9 @@ def classify(lines: list[Line], mid: float) -> None:
             prev_heading = ln
             continue
         prev_heading = None
-        if ln.bold and CAPTION_RE.match(ln.text) and ln.size <= 12.5:
+        # captions are bold, except a few set in plain 10 pt Times (TABLE 7-6)
+        if CAPTION_RE.match(ln.text) and (ln.bold and ln.size <= 12.5
+                                          or not arial and ln.size < 11):
             ln.kind = "caption"
         elif not arial and ln.size >= 11:
             ln.kind = "body"
@@ -178,7 +181,7 @@ def reading_order(lines: list[Line], images: list, mid: float) -> list[Line]:
     def band(l: Line) -> int:
         return sum(1 for s0, s1 in seps if s1 <= l.y0 + 1)
 
-    flow = [l for l in lines if l.kind in ("body", "heading", "caption")]
+    flow = [l for l in lines if l.kind in ("body", "heading", "caption", "inline")]
     full = {id(l) for l in flow if l.kind != "body" and crossing(l.x0, l.x1, mid)}
     return sorted(flow, key=lambda l: (band(l), 0 if id(l) in full else 1,
                                        0 if id(l) in full else l.col, l.y0, l.x0))
@@ -202,6 +205,7 @@ class Block:
     label: str | None
     heading_path: list[str]
     title: str = ""
+    title_open: bool = False
     lines: list = field(default_factory=list)   # (text, sublabel or None, page, label)
     wkind: str = ""               # WARNING / CAUTION / NOTE
     last: Line | None = None
@@ -216,7 +220,7 @@ class Builder:
         self.para: Block | None = None
         self.warn: Block | None = None
         self.warn_count: dict[tuple, int] = {}
-        self.stats = {"reserved": 0, "orphan_aux_lines": 0, "table_methods": {}}
+        self.stats = {"reserved": 0, "inline_lines": 0}
 
     # -- ids -------------------------------------------------------------
     def unique_loc(self, loc: str, page: int) -> str:
@@ -274,15 +278,22 @@ class Builder:
                 self.stats["reserved"] += 1
                 return
             pid = f"{m.group(1)}-{m.group(2)}"
-            title = re.sub(r"^\s*\d{1,2}[-–]\d{1,3}\.\s*", "", lead).strip().rstrip(".").strip()
+            title = re.sub(r"^\s*\d{1,2}[-–]\d{1,3}\.\s*", "", lead)
             self.para = Block("para", pid, ln.page, meta["label"],
-                              self.path() + [f"{pid}. {title}"], title=title,
-                              chg1=meta["chg1"])
+                              self.path() + [""], title=title, chg1=meta["chg1"])
+            # a title that fills the line and has no closing "." wraps onto the next line
+            self.para.title_open = lead == ln.text.strip() and (
+                not title.strip() or not lead.endswith("."))
+            self.set_title(title)
             self.para.lines.append((ln.text, None, ln.page, meta["label"]))
             self.para.last = ln
             return
         if self.para is None:
             return    # text before the first paragraph of a chapter (none expected)
+        if self.para.title_open:
+            self.para.title_open = bool(lead) and lead == ln.text.strip() and not lead.endswith(".")
+            if lead:
+                self.set_title(join_lines([self.para.title, lead]))
         w = WCN_RE.match(lead) if ln.bold else None
         if w:
             self.close_warn()
@@ -304,6 +315,11 @@ class Builder:
         sub = SUBLABEL_RE.match(lead) if ln.bold else None
         self.para.lines.append((ln.text, sub.group(1) if sub else None, ln.page, meta["label"]))
         self.para.last = ln
+
+    def set_title(self, title: str) -> None:
+        self.para.title = title
+        clean_title = title.replace("\u00ad", "").strip().rstrip(".").strip()
+        self.para.heading_path[-1] = f"{self.para.para_id}. {clean_title}"
 
     def close_warn(self) -> None:
         w = self.warn
@@ -379,42 +395,13 @@ def rows_from_lines(lines: list[Line]) -> list[str]:
     return [" | ".join(join_lines([l.text]) for l in sorted(r, key=lambda l: l.x0)) for r in rows]
 
 
-def word_coverage(rows: list[str], cells: list[Line]) -> float:
-    have = set(re.findall(r"\w+", " ".join(rows).lower()))
-    want = re.findall(r"\w+", join_lines([l.text for l in cells]).lower())
-    return sum(w in have for w in want) / len(want) if want else 1.0
+def assign_aux(lines: list[Line], open_table: dict | None) -> tuple[dict, list[Line]]:
+    """Give each small-font line to a table or figure caption.
 
-
-def plumber_rows(ppage, bbox) -> list[str] | None:
-    """Table grid from pdfplumber inside bbox; None if it finds no real grid."""
-    try:
-        crop = ppage.crop(bbox, strict=False)
-        tables = crop.extract_tables()
-    except Exception:
-        return None
-    rows = []
-    for t in tables:
-        for row in t:
-            cells = [clean(c or "") for c in row]
-            # rule-less tables (e.g. TABLE 7-1): a column comes back as one cell
-            # with values on separate lines; split them back into rows.
-            split = [c.split("\n") for c in cells]
-            counts = {len(s) for s, c in zip(split, cells) if c.strip()}
-            if len(counts) == 1 and counts.pop() > 1 and sum(1 for c in cells if c.strip()) > 1:
-                n = len(max(split, key=len))
-                for i in range(n):
-                    rows.append([s[i] if i < len(s) else "" for s in split])
-            else:
-                rows.append([c.replace("\n", " ") for c in cells])
-    rows = [r for r in rows if any(c.strip() for c in r)]
-    if len(rows) < 2 or max(sum(1 for c in r if c.strip()) for r in rows) < 2:
-        return None
-    return [" | ".join(join_lines([c]) for c in r if c.strip()) for r in rows]
-
-
-def build_floats(b: Builder, lines: list[Line], meta: dict, ppage, open_table: dict | None,
-                 ctx: dict) -> dict | None:
-    """Emit table and figure chunks for one page. Returns the table still open at page end."""
+    Returns (lines owned per caption, lines continuing last page's table). Lines
+    with no caption are marked kind="inline": they are part of the paragraph they
+    sit in (e.g. the untitled tube-support table on PDF p398).
+    """
     caps = sorted((l for l in lines if l.kind == "caption"), key=lambda l: l.y0)
     aux = [l for l in lines if l.kind == "aux"]
     owned: dict[int, list[Line]] = {id(c): [] for c in caps}
@@ -443,11 +430,16 @@ def build_floats(b: Builder, lines: list[Line], meta: dict, ppage, open_table: d
         elif cap_kind(cab) == "FIGURE":       # a figure whose caption sits above it
             owned[id(cab)].append(a)
         else:
-            b.stats["orphan_aux_lines"] += 1
-            b.stats.setdefault("orphan_pages", []).append(a.page)
+            a.kind = "inline"
+    return owned, cont
 
+
+def build_floats(b: Builder, lines: list[Line], meta: dict, open_table: dict | None,
+                 ctx: dict, owned: dict, cont: list[Line]) -> dict | None:
+    """Emit table and figure chunks for one page. Returns the table still open at page end."""
+    caps = sorted((l for l in lines if l.kind == "caption"), key=lambda l: l.y0)
     if cont and open_table is not None:     # table continued from the previous page
-        emit_table(b, open_table["num"], open_table["title"], cont, meta, ppage, ctx)
+        emit_table(b, open_table["num"], open_table["title"], cont, meta, ctx)
 
     still_open = None
     for c in caps:
@@ -455,7 +447,7 @@ def build_floats(b: Builder, lines: list[Line], meta: dict, ppage, open_table: d
         kind, num = m.group(1).upper(), m.group(2).replace("–", "-")
         title = join_lines([c.text])
         if kind == "TABLE":
-            emit_table(b, num, title, owned[id(c)], meta, ppage, ctx, caption=c)
+            emit_table(b, num, title, owned[id(c)], meta, ctx, caption=c)
             still_open = {"num": num, "title": title}
         else:
             text = join_lines([title] + rows_from_lines(owned[id(c)]))
@@ -468,24 +460,9 @@ def build_floats(b: Builder, lines: list[Line], meta: dict, ppage, open_table: d
     return open_table if cont else None
 
 
-def emit_table(b: Builder, num: str, title: str, cells: list[Line], meta: dict, ppage,
-               ctx: dict, caption: Line | None = None) -> None:
-    rows, method = None, "lines"
-    if cells:
-        x0 = min(l.x0 for l in cells) - 2
-        y0 = min(l.y0 for l in cells) - 2
-        x1 = max(l.x1 for l in cells) + 2
-        y1 = max(l.y1 for l in cells) + 2
-        rows = plumber_rows(ppage, (x0, y0, x1, y1))
-        # pdfplumber can silently drop columns (it lost TABLE 7-1's thread sizes);
-        # keep its grid only if it holds nearly every word PyMuPDF sees.
-        if rows and word_coverage(rows, cells) < 0.97:
-            rows = None
-        if rows:
-            method = "pdfplumber"
-    if not rows:
-        rows = rows_from_lines(cells)
-    b.stats["table_methods"][method] = b.stats["table_methods"].get(method, 0) + 1
+def emit_table(b: Builder, num: str, title: str, cells: list[Line], meta: dict, ctx: dict,
+               caption: Line | None = None) -> None:
+    rows = rows_from_lines(cells)
     base = f"table-{num}"
     seg = ctx.setdefault("table_segments", {})
     seg[base] = seg.get(base, 0) + 1
@@ -496,7 +473,7 @@ def emit_table(b: Builder, num: str, title: str, cells: list[Line], meta: dict, 
     b.emit(loc=loc, page=page, label=meta["label"], type_="table",
            text="\n".join([head] + rows), heading_path=b.path(),
            cite=f"{CITE} Table {num}{lab}",
-           extra={"parent": ctx.get("para"), "table_method": method, "segment": seg[base],
+           extra={"parent": ctx.get("para"), "segment": seg[base],
                   "chg1_page": meta["chg1"]})
 
 
@@ -504,15 +481,16 @@ def emit_table(b: Builder, num: str, title: str, cells: list[Line], meta: dict, 
 
 ID = r"\d{1,2}[-–]\d{1,3}[a-z]?(?:\s?[a-z]\b)?(?:\(\w{1,4}\))*"
 REF_RE = re.compile(
-    rf"\b(?P<kind>(?:sub)?paragraphs?|figures?|tables?|appendix)\s+"
+    rf"\b(?P<kind>(?:sub-?)?paragraphs?|figures?|tables?|appendix)\s+"
     rf"(?P<ids>(?:{ID}|\d)(?:\s*(?:,|and|or|through|thru|–|-)\s*(?:{ID}|\d))*)", re.I)
 ID_RE = re.compile(ID)
 SPEC_RE = re.compile(
-    r"\b(?:MIL[-–](?:STD|HDBK|PRF|DTL|[A-Z])[-–]\d+[A-Z]?(?:/\d+[A-Z]?)?"
-    r"|(?:AN|MS|NAS)\s?\d{1,5}[A-Z]{0,2}(?:[-–]\d+[A-Z]*)?"
+    r"\b(?:MIL[-–](?:STD|HDBK|PRF|DTL|[A-Z])[-–]?\d+[A-Z]?(?:/\d+[A-Z]?)?"  # MIL-W5088 typo too
+    r"|FED[-–]STD[-–]\d+[A-Z]?|TSO[-–]C\d+[a-z]?|ANC[-–]\d+"
+    r"|(?:AN|MS|NASM|NAS)[-–\s]?\d{1,5}[A-Z]{0,2}(?:[-–]\d+[A-Z]*)?"
     r"|AMS\s?\d{4}[A-Z]?|AMS[-–][A-Z]+[-–]\d+"
-    r"|SAE\s(?:AS|ARP|AIR|J)\s?\d+[A-Z]?|AS\s?\d{4,5}[A-Z]?"
-    r"|ASTM\s[A-Z]\s?\d+"
+    r"|(?:SAE,?\s)?(?:ARP|AIR)[-–\s]?\d{3,4}[A-Z]?|SAE\s(?:AS|J)\s?\d+[A-Z]?|AS\s?\d{4,5}[A-Z]?"
+    r"|ASTM[-–\s][A-Z][-–\s]?\d+"
     r"|A[-–]A[-–]\d+|(?:TT|QQ|VV|PPP|MMM|O|L|P)[-–][A-Z][-–]\d+[A-Z]?(?:/\d+)?)")
 RELATIVE_RE = re.compile(
     r"\b(?:see\s+)?page\s+\d{1,2}[-–]\d{1,3}\b[^.;)]{0,20}"
@@ -523,8 +501,13 @@ RELATIVE_RE = re.compile(
 
 
 def norm_spec(s: str) -> str:
-    s = s.replace("–", "-")
-    return re.sub(r"(?<=[A-Z])\s(?=\d)", "", s)
+    """One written form per spec, so the same spec always matches itself."""
+    s = re.sub(r"\s+", " ", s.replace("–", "-"))
+    s = re.sub(r"^(?:SAE,? )?(ARP|AIR)[- ]?", r"SAE \1", s)          # SAE ARP-1870 -> SAE ARP1870
+    s = re.sub(r"^ASTM[- ]([A-Z])[- ]?", r"ASTM \1", s)               # ASTM-E-1417 -> ASTM E1417
+    s = re.sub(r"^(AN|MS|NASM|NAS)[- ](?=\d)", r"\1", s)             # MS-21919 -> MS21919
+    s = re.sub(r"^(MIL-(?:STD|HDBK|PRF|DTL|[A-Z]))(?=\d)", r"\1-", s)  # MIL-W5088 -> MIL-W-5088
+    return re.sub(r"(?<=[A-Z]) (?=\d)", "", s)
 
 
 def expand_ids(kind: str, ids: str) -> list[str]:
@@ -587,7 +570,7 @@ class Resolver:
 
     def target(self, kind: str, raw: str) -> str:
         k = kind.lower()
-        if k.startswith(("paragraph", "subparagraph")):
+        if k.startswith(("paragraph", "sub")):
             return self.para(raw)
         if k.startswith("figure"):
             return f"figure-{re.match(r'\d+-\d+[a-z]?', raw).group(0)}"
@@ -611,13 +594,12 @@ def add_refs_and_specs(chunks: list[dict], overrides: list[dict]) -> list[dict]:
     unhandled = []
     for c in chunks:
         own = c["loc"]["id"]
-        own_base = c.get("extra", {}).get("para") or own
         refs, raw = [], []
         for m in REF_RE.finditer(c["text"]):
             for rid in expand_ids(m.group("kind"), m.group("ids")):
                 t = res.target(m.group("kind"), rid)
                 raw.append(f"{m.group('kind').lower()} {rid}")
-                if t not in (own, own_base) and not own.startswith(t + "#") and t not in refs:
+                if t != own and not own.startswith(t + "#") and t not in refs:
                     refs.append(t)
         for o in overrides:
             if o["chunk"] == own:
@@ -636,7 +618,8 @@ def add_refs_and_specs(chunks: list[dict], overrides: list[dict]) -> list[dict]:
             phrase = m.group(0).strip()
             if not any(k == own and p in c["text"][max(0, m.start() - 80):m.end() + 80]
                        for k, p in covered):
-                unhandled.append({"chunk": own, "phrase": phrase})
+                if {"chunk": own, "phrase": phrase} not in unhandled:
+                    unhandled.append({"chunk": own, "phrase": phrase})
     return unhandled
 
 
@@ -644,7 +627,6 @@ def add_refs_and_specs(chunks: list[dict], overrides: list[dict]) -> list[dict]:
 
 def parse(pdf_path: Path = PDF, overrides_path: Path = OVERRIDES) -> tuple[list[dict], dict]:
     doc = pymupdf.open(pdf_path)
-    plumb = pdfplumber.open(pdf_path)
     b = Builder()
     open_table = None
     ctx: dict = {}
@@ -676,6 +658,8 @@ def parse(pdf_path: Path = PDF, overrides_path: Path = OVERRIDES) -> tuple[list[
                    cite=f"{CITE} Appendix {appendix}, PDF p. {pno}",
                    extra={"chg1_page": meta["chg1"]})
             continue
+        owned, cont = assign_aux(lines, open_table)
+        b.stats["inline_lines"] += sum(1 for l in lines if l.kind == "inline")
         imgs = [tuple(i["bbox"]) for i in page.get_image_info()]
         heading_buf: list[Line] = []
         for ln in reading_order(lines, imgs, mid):
@@ -687,12 +671,14 @@ def parse(pdf_path: Path = PDF, overrides_path: Path = OVERRIDES) -> tuple[list[
                 heading_buf = []
             if ln.kind == "body":
                 b.body(ln, meta)
+            elif ln.kind == "inline":
+                b.body(ln, meta)
             elif ln.kind == "caption":
                 b.close_warn()
         if heading_buf:
             apply_headings(b, heading_buf)
         ctx["para"] = b.para.para_id if b.para else None
-        open_table = build_floats(b, lines, meta, plumb.pages[pno - 1], open_table, ctx)
+        open_table = build_floats(b, lines, meta, open_table, ctx, owned, cont)
     b.finish()
     overrides = yaml.safe_load(overrides_path.read_text()) or [] if overrides_path.exists() else []
     b.stats["unhandled_relative_refs"] = add_refs_and_specs(b.chunks, overrides)
