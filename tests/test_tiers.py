@@ -25,6 +25,8 @@ def direct(loc_id, rank, *reasons, exact=False):
 
 
 def ripple(loc_id, rank, reason, seed):
+    if not reason.seed:
+        reason = dataclasses.replace(reason, seed=f"m:{seed}")
     return Candidate(chunk_of(loc_id), "ripple", rank, [reason], seed=f"m:{seed}")
 
 
@@ -70,6 +72,21 @@ def test_weak_ripples_and_ripples_of_check_these_spots_are_check_these():
     assert locs(t.check) == ["3-3", "5-4", "6-1-r", "3-3f"]
 
 
+def test_a_strong_link_to_a_likely_spot_makes_a_ripple_likely_even_if_listed_second():
+    c = ripple("3-2", 2, Reason("same_spec", "MIL-D-99007A", via="5-4", seed="m:5-4"), seed="5-4")
+    c.reasons.append(Reason("points_to", via="3-1", seed="m:3-1"))
+    t = tiers.tier([direct("3-1", 0, Reason("loc", "3-1"), exact=True),
+                    direct("7-1", 1, Reason("words", "wash")), c])
+    assert "3-2" in locs(t.likely)
+
+
+def test_highlight_marks_the_found_place_not_the_first_lookalike():
+    c = Candidate(Chunk(0, "x", "9-9", "X", "text", "See 17-144 for details and paragraph 7-144.",
+                        (), (), ()), "ripple", 0, [Reason("points_to", via="7-144")])
+    out = tiers.render("scope", "", tiers.tier([c]))
+    assert "See 17-144 for details and paragraph «7-144»." in out
+
+
 def test_tier_keeps_origin_labels():
     t = tiers.tier([
         direct("3-1", 0, Reason("spec", "MIL-B-99001"), exact=True),
@@ -110,6 +127,7 @@ def test_long_snippets_are_cut_around_the_highlight(monkeypatch):
     monkeypatch.setattr(tiers, "SNIPPET_CHARS", 30)
     s = tiers.tier([direct("3-1", 0, Reason("value", "0.10 inch"))]).likely[0]
     assert s.snippet.startswith("…") and "0.10 inch" in s.snippet
+    assert s.snippet[s.highlight_at:s.highlight_at + len(s.highlight)] == "0.10 inch"
     assert len(s.snippet) <= 32
 
 

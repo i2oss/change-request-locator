@@ -147,7 +147,8 @@ def test_ripple_points_to_a_hit(index):
 
 def test_ripple_shares_a_spec_with_a_hit(index):
     found = locate(index, "Revise paragraph 3-2.")
-    assert found["5-4"].reasons == [search.Reason("same_spec", "MIL-D-99007A", via="3-2")]
+    # The why names the spec as the ripple itself states it.
+    assert found["5-4"].reasons == [search.Reason("same_spec", "MIL-D-99007", via="3-2")]
 
 
 def test_ripple_repeats_a_hit_warning(index):
@@ -207,3 +208,36 @@ def test_top_search_spots_stay_direct_beside_each_other(index):
     """Without an exact hit, a top search spot is not demoted by another search spot."""
     found = locate(index, "brake lining disc warping", embed=fake_embed)
     assert found["3-1"].origin == found["3-2"].origin == "direct"
+
+
+def test_spec_reason_names_the_revision_the_chunk_states(index):
+    found = locate(index, "MIL-D-99007B is cancelled.")
+    assert found["3-2"].reasons[0] == search.Reason("spec", "MIL-D-99007A")
+    assert found["5-4"].reasons[0] == search.Reason("spec", "MIL-D-99007")
+
+
+def test_lowercase_revision_letters_are_revisions_too():
+    assert search.spec_key("TSO-C91a") == search.spec_key("TSO-C91") == "TSO-C91"
+    assert search.spec_key("MIL-W-5088L") == "MIL-W-5088"
+
+
+def test_value_written_differently_still_gets_a_reason(index):
+    """FTS matches 0.10-inch / 0.10 inches; the reason must not go missing."""
+    found = locate(index, "Wear limit goes from 0.10 inches to 0.08 inches.")
+    assert search.Reason("value", "0.10 inches") in found["table-3-1"].reasons
+
+
+def test_every_candidate_has_a_reason(index):
+    for text in ("Wear limit 0.10 inches.", "brake 12 psi", "Revise paragraph 3-2."):
+        for c in search.locate(index, read_request(text), embed=fake_embed):
+            assert c.reasons, c.chunk.loc_id
+
+
+
+def test_a_ripple_keeps_every_link_strongest_first(index):
+    """3-2 shares a spec with 5-4 (found first) and points at 3-1: the strong link leads."""
+    found = locate(index, "Revise paragraphs 5-4 and 3-1.")
+    assert found["3-2"].origin == "ripple"
+    assert found["3-2"].reasons == [search.Reason("points_to", via="3-1"),
+                                    search.Reason("same_spec", "MIL-D-99007A", via="5-4")]
+    assert found["3-2"].reasons[0].seed == "m:3-1"

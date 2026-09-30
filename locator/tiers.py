@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from locator.search import Candidate, Chunk, Reason, spec_key, term_pattern
+from locator.search import Candidate, Chunk, Reason, spec_key, term_pattern, value_pattern
 
 # Tier knobs. Tune them on the tune split only (SPEC §6.4).
 LIKELY_TOP = 3                # search-only spots in Likely when there are no exact hits
@@ -32,6 +32,7 @@ class Spot:
     why: str
     snippet: str
     highlight: str | None     # the part of the snippet to highlight, if any
+    highlight_at: int | None  # where it starts in the snippet
 
 
 @dataclass(frozen=True)
@@ -54,8 +55,8 @@ def tier(candidates: list[Candidate]) -> Tiers:
                 likely_ids.add(c.chunk.id)
             searched += 1
     for c in candidates:   # after every direct spot is placed, since ripples follow them
-        if (c.origin == "ripple" and c.seed in likely_ids
-                and c.reasons[0].kind in STRONG_RIPPLES):
+        if c.origin == "ripple" and any(r.kind in STRONG_RIPPLES and r.seed in likely_ids
+                                        for r in c.reasons):
             likely_ids.add(c.chunk.id)
 
     order = sorted(candidates, key=lambda c: (c.origin != "direct", c.rank))
@@ -105,9 +106,9 @@ def show_loc(loc_id: str) -> str:
 # ---------------------------------------------------------------- snippets
 
 def _spot(c: Candidate) -> Spot:
-    snippet, highlight = _snippet(c.chunk.text, _highlight(c.chunk, c.reasons))
+    snippet, highlight_at, highlight = _snippet(c.chunk.text, _highlight(c.chunk, c.reasons))
     return Spot(c.chunk.id, c.chunk.loc_id, c.chunk.cite, c.chunk.type, c.origin,
-                why(c.reasons), snippet, highlight)
+                why(c.reasons), snippet, highlight, highlight_at)
 
 
 def _highlight(chunk: Chunk, reasons: list[Reason]) -> re.Match | None:
@@ -117,7 +118,7 @@ def _highlight(chunk: Chunk, reasons: list[Reason]) -> re.Match | None:
         if r.kind in ("spec", "same_spec"):
             patterns = [re.escape(r.detail), re.escape(spec_key(r.detail)) + r"[A-Z]?\b"]
         elif r.kind == "value":
-            patterns = [r"\s*".join(map(re.escape, r.detail.split()))]
+            patterns = [value_pattern(r.detail)]
         elif r.kind == "words":
             patterns = [term_pattern(t) for t in r.detail.split(", ") if t]
         elif r.kind == "points_to":
@@ -129,11 +130,12 @@ def _highlight(chunk: Chunk, reasons: list[Reason]) -> re.Match | None:
     return None
 
 
-def _snippet(text: str, m: re.Match | None) -> tuple[str, str | None]:
-    """A window of about SNIPPET_CHARS around the highlight, cut at spaces."""
+def _snippet(text: str, m: re.Match | None) -> tuple[str, int | None, str | None]:
+    """A window of about SNIPPET_CHARS around the highlight, cut at spaces.
+    Returns the snippet, where the highlight starts in it, and the highlight."""
     n = SNIPPET_CHARS
     if len(text) <= n:
-        return text, m.group(0) if m else None
+        return (text, m.start(), m.group(0)) if m else (text, None, None)
     hs, he = (m.start(), m.end()) if m else (0, 0)
     start = max(0, min(hs - (n - (he - hs)) // 2, len(text) - n))
     end = start + n
@@ -141,8 +143,13 @@ def _snippet(text: str, m: re.Match | None) -> tuple[str, str | None]:
         start = sp + 1
     if end < len(text) and (sp := text.rfind(" ", he, end)) != -1:
         end = sp
-    out = ("…" if start > 0 else "") + text[start:end].strip() + ("…" if end < len(text) else "")
-    return out, m.group(0) if m and start <= hs and he <= end else None
+    body = text[start:end]
+    lead = len(body) - len(body.lstrip())
+    prefix = "…" if start > 0 else ""
+    out = prefix + body.strip() + ("…" if end < len(text) else "")
+    if m and start + lead <= hs and he <= end:
+        return out, len(prefix) + hs - start - lead, m.group(0)
+    return out, None, None
 
 
 # ---------------------------------------------------------------- output
@@ -157,8 +164,9 @@ def render(scope: str, request_line: str, tiers: Tiers) -> str:
             lines.append("  (none)")
         for s in spots:
             snippet = s.snippet
-            if s.highlight:
-                snippet = snippet.replace(s.highlight, f"«{s.highlight}»", 1)
+            if s.highlight and s.highlight_at is not None:
+                at, end = s.highlight_at, s.highlight_at + len(s.highlight)
+                snippet = f"{snippet[:at]}«{snippet[at:end]}»{snippet[end:]}"
             lines += [f"  [{s.origin}] {s.cite}", f"      why: {s.why}",
                       f"      {' '.join(snippet.split())}"]
         lines.append("")

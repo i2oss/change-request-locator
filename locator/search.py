@@ -20,7 +20,7 @@ import json
 import re
 import sqlite3
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -42,6 +42,7 @@ FUSED_KEEP = 12       # non-exact direct spots kept after fusion
 RIPPLE_SEEDS = 5      # top fused spots whose ripples are expanded (exact hits always are)
 SPEC_FANOUT = 25      # a spec shared by more chunks than this says nothing; skip it
 WARNING_OVERLAP = 0.6  # share of the shorter warning's word pairs found in the other
+RIPPLE_ORDER = ("points_to", "same_warning", "same_spec", "variant")   # strongest first
 
 
 # ---------------------------------------------------------------- 1. read the request
@@ -111,6 +112,14 @@ def term_pattern(term: str) -> str:
     return rf"(?<![\w-]){re.escape(term)}(?![\w-])"
 
 
+def value_pattern(value: str) -> str:
+    """Regex for a request value in chunk text, as loose as the keyword index:
+    "0.10 inches" also finds "0.10-inch"."""
+    parts = [re.escape(t) if t.isdigit() else re.escape(t[:max(4, len(t) - 2)]) + "[a-z]*"
+             for t in re.findall(r"[A-Za-z]+|\d+", value)]
+    return r"(?<![\w.])" + r"[\W_]*".join(parts) + r"(?!\d)"
+
+
 # ---------------------------------------------------------------- the index
 
 @dataclass(frozen=True)
@@ -127,8 +136,14 @@ class Chunk:
 
 
 def spec_key(spec: str) -> str:
-    """MIL-W-5088L and MIL-W-5088 are one spec at different revisions."""
-    return re.sub(r"(?<=\d)[A-Z]$", "", spec)
+    """MIL-W-5088L and MIL-W-5088 (or TSO-C91a and TSO-C91) are one spec at
+    different revisions."""
+    return re.sub(r"(?<=\d)[A-Za-z]$", "", spec)
+
+
+def stated_spec(chunk: Chunk, spec: str) -> str:
+    """The spec as the chunk writes it, e.g. MIL-W-5088K for a request's MIL-W-5088L."""
+    return next((s for s in chunk.specs if spec_key(s) == spec_key(spec)), spec)
 
 
 class Index:
@@ -192,6 +207,7 @@ class Reason:
                      # ripple: points_to, same_spec, same_warning, variant
     detail: str = ""  # the spec, value, matched words or variant
     via: str = ""     # loc.id of the hit a ripple hangs off
+    seed: str = field(default="", compare=False)   # ... and that hit's chunk id
 
 
 @dataclass
@@ -201,7 +217,7 @@ class Candidate:
     rank: int                    # order found, exact hits first; never shown
     reasons: list[Reason]
     exact: bool = False
-    seed: str | None = None      # chunk id of the hit a ripple hangs off
+    seed: str | None = None      # chunk id of the hit its strongest ripple link hangs off
 
 
 def locate(index: Index, request: Request, embed: QueryEmbed) -> list[Candidate]:
@@ -210,26 +226,32 @@ def locate(index: Index, request: Request, embed: QueryEmbed) -> list[Candidate]
     Exact hits are always direct. A fused spot that is also a ripple is listed as
     that ripple, since a structural link says more than a search rank; its search
     reasons stay on. The top fused spots (the other ripple seeds) give way only to
-    ripples of exact hits, not to each other's.
+    ripples of exact hits, not to each other's. A ripple keeps every link that
+    reaches it, strongest first.
     """
     exact = _exact_hits(index, request)
     fused = dict([(cid, reasons) for cid, reasons in _fused_hits(index, request, embed)
                   if cid not in exact][:FUSED_KEEP])
     fused_seeds = list(fused)[:RIPPLE_SEEDS]
 
-    ripples: dict[str, tuple[Reason, str]] = {}
+    ripples: dict[str, list[Reason]] = {}
     for seed in list(exact) + fused_seeds:
         for cid, reason in _ripples(index, index.chunks[seed]):
-            if cid in exact or cid in ripples or (cid in fused_seeds and seed not in exact):
+            if cid in exact or (cid in fused_seeds and seed not in exact):
                 continue
-            ripples[cid] = reason, seed
+            links = ripples.setdefault(cid, [])
+            if reason not in links:
+                links.append(reason)
+    for links in ripples.values():
+        links.sort(key=lambda r: RIPPLE_ORDER.index(r.kind))
 
     found = [Candidate(index.chunks[cid], "direct", 0, reasons, exact=True)
              for cid, reasons in exact.items()]
     found += [Candidate(index.chunks[cid], "direct", 0, reasons)
               for cid, reasons in fused.items() if cid not in ripples]
-    found += [Candidate(index.chunks[cid], "ripple", 0, [reason] + fused.get(cid, []), seed=seed)
-              for cid, (reason, seed) in ripples.items()]
+    found += [Candidate(index.chunks[cid], "ripple", 0, links + fused.get(cid, []),
+                        seed=links[0].seed)
+              for cid, links in ripples.items()]
     for rank, c in enumerate(found):
         c.rank = rank
     return found
@@ -245,7 +267,7 @@ def _exact_hits(index: Index, request: Request) -> dict[str, list[Reason]]:
             hits.setdefault(cid, []).append(Reason("loc", ref))
     for spec in request.specs:
         for cid in index.by_spec.get(spec_key(spec), []):
-            hits.setdefault(cid, []).append(Reason("spec", spec))
+            hits.setdefault(cid, []).append(Reason("spec", stated_spec(index.chunks[cid], spec)))
     return hits
 
 
@@ -269,7 +291,7 @@ def _fused_hits(index: Index, request: Request, embed: QueryEmbed):
             reasons.append(Reason("words", ", ".join(_matched_terms(chunk, request.terms))))
         if cid in lists["meaning"]:
             reasons.append(Reason("meaning"))
-        yield cid, reasons
+        yield cid, reasons or [Reason("words")]   # found by keyword, but not in a form we spot
 
 
 def _fts(index: Index, phrases: list[str]) -> list[str]:
@@ -293,7 +315,7 @@ def _nearest(index: Index, text: str, embed: QueryEmbed) -> list[str]:
 
 
 def _has_value(text: str, value: str) -> bool:
-    return re.sub(r"\s+", "", value).lower() in re.sub(r"\s+", "", text).lower()
+    return re.search(value_pattern(value), text, re.I) is not None
 
 
 def _matched_terms(chunk: Chunk, terms: tuple[str, ...]) -> list[str]:
@@ -316,7 +338,7 @@ def _ripples(index: Index, hit: Chunk):
         f" WHERE r.ref IN ({marks}) ORDER BY c.seq", sorted(targets))
     for (cid,) in rows:
         if cid != hit.id:
-            yield cid, Reason("points_to", via=hit.loc_id)
+            yield cid, Reason("points_to", via=hit.loc_id, seed=hit.id)
 
     for spec in hit.specs:
         sharing = index.by_spec.get(spec_key(spec), [])
@@ -324,19 +346,20 @@ def _ripples(index: Index, hit: Chunk):
             continue
         for cid in sharing:
             if cid != hit.id:
-                yield cid, Reason("same_spec", spec, via=hit.loc_id)
+                yield cid, Reason("same_spec", stated_spec(index.chunks[cid], spec),
+                                  via=hit.loc_id, seed=hit.id)
 
     if hit.type == "warning":
         for other in index.chunks.values():
             if other.type == "warning" and other.id != hit.id and _repeats(hit.text, other.text):
-                yield other.id, Reason("same_warning", via=hit.loc_id)
+                yield other.id, Reason("same_warning", via=hit.loc_id, seed=hit.id)
 
     for other in index.chunks.values():
         if (other.id != hit.id and other.heading_path == hit.heading_path
                 and (other.applies_to or hit.applies_to)
                 and set(other.applies_to) != set(hit.applies_to)):
             yield other.id, Reason("variant", ", ".join(other.applies_to) or "all variants",
-                                   via=hit.loc_id)
+                                   via=hit.loc_id, seed=hit.id)
 
 
 LEAD_IN_RE = re.compile(r"^\W*(?:warning|caution|note)s?\b\W*", re.I)
