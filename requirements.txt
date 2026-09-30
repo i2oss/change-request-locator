@@ -1,4 +1,9 @@
+# CPU-only torch: the embedder runs on a laptop CPU, and the CUDA build is ~2 GB.
+--extra-index-url https://download.pytorch.org/whl/cpu
 pymupdf
 jsonschema
 pyyaml
 pytest
+numpy
+torch
+sentence-transformers

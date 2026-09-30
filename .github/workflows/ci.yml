@@ -34,10 +34,21 @@ jobs:
       - name: Chunk contract check
         run: python scripts/check_chunks.py build/faa_chunks.jsonl
 
+      # The embedding model (~130 MB) comes from Hugging Face. Cache it by the
+      # config file that names it, so changing the model refreshes the cache.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-model-${{ hashFiles('locator/config.py') }}
+
+      - name: Build index
+        run: python scripts/build_index.py build/faa_chunks.jsonl
+
       - name: Tests
         run: python -m pytest -q
         env:
           REQUIRE_PDF: "1"
+          REQUIRE_INDEX: "1"
 
       - uses: actions/upload-artifact@v4
         if: always()

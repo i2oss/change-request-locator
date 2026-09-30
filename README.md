@@ -27,6 +27,18 @@ python -m pytest
 - `corpus/faa/ref_overrides.yaml` holds the hand-fixed relative and page references ("see page 4-19, f.").
 - `build/faa_parse_stats.json` records what the parser skipped or placed inline.
 
+## FAA index (build step 2)
+
+```sh
+python scripts/build_index.py build/faa_chunks.jsonl   # -> build/faa.sqlite (~1 min on a laptop CPU)
+python -m pytest tests/test_build_index.py
+```
+
+- One SQLite file per corpus holds everything the locator searches: the chunks, lookup tables for `refs_out` / `specs` / `applies_to`, an FTS5 keyword index, and the embeddings. Copy it anywhere; plain `sqlite3` opens it.
+- The `meta` table says what was searched (doc, chunk count, embedding model).
+- The embedding model is set once, in `locator/config.py`. Changing it means rebuilding every index.
+- The first build downloads the model (~130 MB) from Hugging Face; later builds use the local copy.
+
 ## Adding a format
 
 Every manual format gets one parser; the locator only ever reads chunks.
