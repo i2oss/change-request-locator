@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/i2oss/change-request-locator/schema/chunk.schema.json",
+  "title": "Chunk",
+  "description": "One searchable piece of a manual (SPEC §4.1). Format-agnostic: a field is named only if the locator's logic reads it; everything else goes in `extra`.",
+  "type": "object",
+  "required": ["id", "doc", "loc", "heading_path", "type", "text", "refs_out"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "Unique chunk id.",
+      "type": "string",
+      "minLength": 1
+    },
+    "doc": {
+      "description": "Source document and revision.",
+      "type": "string",
+      "minLength": 1
+    },
+    "loc": {
+      "type": "object",
+      "required": ["scheme", "id", "cite"],
+      "additionalProperties": false,
+      "properties": {
+        "scheme": {
+          "description": "Location scheme, e.g. faa-para, s1000d.",
+          "type": "string",
+          "enum": ["faa-para", "s1000d"]
+        },
+        "id": {
+          "description": "Canonical location, unique in the doc, e.g. 4-47 or DMC-...#step-3.",
+          "type": "string",
+          "minLength": 1
+        },
+        "cite": {
+          "description": "Human citation shown on a spot, e.g. \"AC 43.13-1B ¶4-47, p. 4-21\".",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "heading_path": {
+      "description": "Breadcrumb of headings, outermost first.",
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "type": {
+      "description": "warning covers WARNING, CAUTION and NOTE.",
+      "type": "string",
+      "enum": ["text", "warning", "table", "figure"]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "refs_out": {
+      "description": "loc.ids this chunk points to. May be empty.",
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "specs": {
+      "description": "Spec, standard and part numbers (the strongest ripple signal).",
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "applies_to": {
+      "description": "Applicability; empty means all variants.",
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "page": {
+      "description": "Printed page label.",
+      "type": "string"
+    },
+    "extra": {
+      "description": "Never read by the pipeline.",
+      "type": "object"
+    }
+  }
+}

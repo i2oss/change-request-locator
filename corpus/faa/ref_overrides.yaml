@@ -1,0 +1,116 @@
+# Hand fixes for references the regex in parsers/faa_pdf.py can't resolve (SPEC §4.3).
+#
+# The parser flags every relative or page-based phrase ("the following paragraphs",
+# "this table", "see page 4-19, f."). Each one must be listed here, so none is
+# skipped silently; the parser reports any flagged phrase that isn't.
+#
+#   chunk:  loc.id of the chunk holding the phrase
+#   phrase: exact text from that chunk (the parser stops if it's missing)
+#   refs:   loc.ids the phrase points to; [] when it points inside the chunk itself
+#   note:   why
+
+# --- points outside the chunk -------------------------------------------------
+
+- chunk: "7-2"
+  phrase: "see page 4-19, f."
+  refs: ["4-57f"]
+  note: printed page 4-19, sub-paragraph f. is 4-57f (blind rivets)
+
+- chunk: "7-181"
+  phrase: "figure 726(C)"
+  refs: ["figure-7-26"]
+  note: typo in the source (dash missing); figure 7-26 is the safety-wire figure
+
+- chunk: "8-2d"
+  phrase: "preceding paragraphs"
+  refs: ["8-2"]
+  note: the earlier sub-paragraphs of 8-2, which sit in the first 8-2 piece
+
+- chunk: "3-4"
+  phrase: "following paragraphs"
+  refs: ["3-4b"]
+  note: vacuum-bag steps continue in the next piece of 3-4
+
+- chunk: "5-5"
+  phrase: "following paragraphs"
+  refs: ["5-5c", "5-5d"]
+  note: flaw types a.-d.; c. and d. are in later pieces of 5-5
+
+- chunk: "4-16"
+  phrase: "following paragraphs"
+  refs: ["4-17", "4-18", "4-19", "4-20"]
+  note: the hardness tests (Rockwell, Brinell, Vickers, microhardness)
+
+- chunk: "5-46"
+  phrase: "following paragraphs"
+  refs: ["5-47", "5-48", "5-49", "5-50", "5-51"]
+  note: the steps it lists match the titles of 5-47 to 5-51
+
+- chunk: "5-60"
+  phrase: "following paragraphs"
+  refs: ["5-62"]
+  note: 5-62 BASIC STEPS TO PERFORM PENETRATION INSPECTION
+
+- chunk: "6-89"
+  phrase: "following paragraphs"
+  refs: ["6-90", "6-91"]
+  note: the rest of section 6 (safety precautions, work procedures)
+
+- chunk: "8-30"
+  phrase: "following paragraphs"
+  refs: ["8-31", "8-32", "8-33", "8-34", "8-35", "8-36", "8-37", "8-38"]
+  note: the rest of section 2, fuel systems
+
+- chunk: "9-42c"
+  phrase: "as outlined in “OUTSIDE PATCHES,”"
+  refs: []
+  note: "title reference; the 'sub-paragraphs 9-42b(1)(a)-(e)' right after it is resolved by the regex (-> 9-42)"
+
+# --- left without a target on purpose ----------------------------------------
+
+- chunk: "4-51"
+  phrase: "following paragraphs"
+  refs: []
+  note: "vague: 'the following paragraphs on aluminum alloy structures' means most of section 4; too broad to be a useful ripple"
+
+# --- points inside the chunk itself (no ref needed) ---------------------------
+
+- chunk: "4-98"
+  phrase: "following paragraphs"
+  refs: []
+  note: its own sub-paragraphs a.-d.
+
+- chunk: "7-181"
+  phrase: "following paragraphs"
+  refs: []
+  note: its own sub-paragraphs a. and b.
+
+- chunk: "1-66"
+  phrase: "previous paragraph"
+  refs: []
+  note: sub-paragraph e. refers to d. in the same chunk
+
+- chunk: "4-102"
+  phrase: "this figure"
+  refs: []
+  note: figures 4-46/4-47, already caught by the regex
+
+- chunk: "table-1-1"
+  phrase: "following table"
+  refs: []
+  note: the table's own notes
+
+- chunk: "table-1-1"
+  phrase: "this table"
+  refs: []
+  note: the table itself
+
+- chunk: "table-1-1#2"
+  phrase: "following table"
+  refs: []
+  note: continuation page repeats the caption
+
+- chunk: "table-9-5"
+  phrase: "This table"
+  refs: []
+  note: the table itself

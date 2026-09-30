@@ -1,0 +1,4 @@
+pymupdf
+jsonschema
+pyyaml
+pytest

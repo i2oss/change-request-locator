@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  faa-chunks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # The FAA PDF is never committed. Cache it by the pinned hash so CI
+      # doesn't download 21 MB from faa.gov on every run.
+      - uses: actions/cache@v4
+        with:
+          path: corpus/faa/*.pdf
+          key: faa-pdf-${{ hashFiles('corpus/faa/fetch.py') }}
+
+      - name: Fetch FAA PDF (checks SHA-256)
+        run: python corpus/faa/fetch.py
+
+      - name: Parse
+        run: python parsers/faa_pdf.py
+
+      - name: Chunk contract check
+        run: python scripts/check_chunks.py build/faa_chunks.jsonl
+
+      - name: Tests
+        run: python -m pytest -q
+        env:
+          REQUIRE_PDF: "1"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: faa-chunks
+          path: build/
