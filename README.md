@@ -39,6 +39,23 @@ python -m pytest tests/test_build_index.py
 - The embedding model is set once, in `locator/config.py`. Changing it means rebuilding every index.
 - The first build downloads the model (~130 MB) from Hugging Face; later builds use the local copy.
 
+## Baseline locator (build step 2)
+
+```sh
+python -m locator "Flexible cable spec MIL-W-83420 is replaced by MRS-C-200." --db build/faa.sqlite
+python -m pytest tests/test_search.py tests/test_tiers.py tests/test_locator_faa.py
+```
+
+- Rules and search only, no LLM: the bar the LLM steps must beat.
+- It prints what was searched, what it read from the request (specs, refs, values, words), then the spots in two tiers, **Likely** and **Check these**. Each spot shows its citation, a "why" line and a snippet (`«»` marks what was found). There are no scores; retrieval scores aren't probabilities.
+- `locator/search.py` reads the request and finds candidates:
+  - exact lookups: specs the request names (any revision letter), and paragraphs/tables/figures it names (with their lettered parts and warnings)
+  - keyword (FTS5) and meaning (embedding) search, merged by reciprocal rank fusion
+  - ripples by plain lookup: chunks pointing at a hit, sharing a spec with it, repeating its warning, or splitting it by applicability
+- `locator/tiers.py` sorts them into tiers and writes the "why" lines from templates.
+- The knobs (how many spots to keep, where the tier cutoffs sit) are constants at the top of each file. Tune them on the eval's tune split only.
+- The smoke tests use made-up requests only. Requests from the 2024 FAA edits are the eval set; never test or tune on them.
+
 ## Adding a format
 
 Every manual format gets one parser; the locator only ever reads chunks.
