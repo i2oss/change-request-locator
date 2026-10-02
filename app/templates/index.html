@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Change-Request Locator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+<header>
+  <h1>Change-Request Locator</h1>
+  <p class="scope">Searches: {{ scope }}</p>
+</header>
+
+<form class="ask" method="get" action="{{ url_for('page') }}">
+  <label for="request">Change request</label>
+  <textarea name="request" id="request" rows="4" required
+            placeholder="Paste the change request as it came in.">{{ text }}</textarea>
+  <button type="submit">Locate</button>
+</form>
+
+{% macro snippet(s) -%}
+  {%- if s.highlight and s.highlight_at is not none -%}
+    {%- set end = s.highlight_at + s.highlight|length -%}
+    {{ s.snippet[:s.highlight_at] }}<mark>{{ s.snippet[s.highlight_at:end] }}</mark>{{ s.snippet[end:] }}
+  {%- else -%}
+    {{ s.snippet }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro tier_block(id, title, note, spots, tier) %}
+<section class="tier tier-{{ tier }}" id="{{ id }}">
+  <h2>{{ title }} <span class="count">{{ spots|length }}</span></h2>
+  <p class="note">{{ note }}</p>
+  {% if not spots %}<p class="none">(none)</p>{% endif %}
+  <ol class="spots">
+  {% for s in spots %}
+    <li class="spot {{ s.origin }}" data-loc="{{ s.loc_id }}" data-tier="{{ tier }}" data-origin="{{ s.origin }}" data-verdict="{{ marks.get(s.loc_id, {}).get('verdict', '') }}">
+      <div class="head">
+        <span class="origin">{{ s.origin }}</span>
+        <span class="cite">{{ s.cite }}</span>
+        <span class="marking">
+          <button type="button" class="confirm" data-verdict="confirm" title="Confirm: this spot must change">✓ Confirm</button>
+          <button type="button" class="reject" data-verdict="reject" title="Reject: this spot doesn't change">✗ Reject</button>
+        </span>
+      </div>
+      <p class="why">why: {{ s.why }}</p>
+      <p class="snippet">{{ snippet(s) }}</p>
+    </li>
+  {% endfor %}
+  </ol>
+</section>
+{% endmacro %}
+
+{% if text %}
+<main id="result" data-request="{{ text }}">
+  <p class="read">Read: {{ read }}</p>
+
+  {% if not found.likely and not found.check %}
+    <p class="empty">No spots found in {{ scope }}.</p>
+  {% else %}
+    {{ tier_block("tier-likely", "Likely", "Spots you almost certainly need to look at.", found.likely, "likely") }}
+    {{ tier_block("tier-check", "Check these", "Lower-ranked but plausible. Missing a ripple costs more than skimming one.", found.check, "check") }}
+  {% endif %}
+
+  <section class="missed" id="missed">
+    <h2>Add missed</h2>
+    <p class="note">A spot that must change but isn't listed. Type its paragraph, table or figure, e.g. 7-144, table 7-4, figure 7-9.</p>
+    <form class="add-missed">
+      <input name="loc_id" aria-label="Missed spot" placeholder="7-144" required>
+      <button type="submit">Add</button>
+      <span class="error" role="alert"></span>
+    </form>
+    <ul class="missed-list">
+    {% for m in missed %}
+      <li data-loc="{{ m.loc_id }}"><span class="cite">{{ m.cite }}</span>
+        <button type="button" class="remove" title="Remove this added spot">Remove</button></li>
+    {% endfor %}
+    </ul>
+  </section>
+
+  <p class="export">
+    Marks save as you click.
+    <a href="{{ url_for('export_marks', request_id=rid) }}">Export this request's marks</a> ·
+    <a href="{{ url_for('export_marks') }}">Export all marks</a> (JSONL)
+  </p>
+</main>
+<script src="{{ url_for('static', filename='marks.js') }}"></script>
+{% endif %}
+</body>
+</html>

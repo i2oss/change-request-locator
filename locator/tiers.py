@@ -12,7 +12,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from locator.search import Candidate, Chunk, Reason, spec_key, term_pattern, value_pattern
+from locator.search import (Candidate, Chunk, Reason, Request, spec_key, term_pattern,
+                            value_pattern)
 
 # Tier knobs. Tune them on the tune split only (SPEC §6.4).
 LIKELY_TOP = 3                # search-only spots in Likely when there are no exact hits
@@ -153,6 +154,13 @@ def _snippet(text: str, m: re.Match | None) -> tuple[str, int | None, str | None
 
 
 # ---------------------------------------------------------------- output
+
+def describe(request: Request) -> str:
+    """What the locator read from the request, so the writer can see what drove it."""
+    parts = [("specs", request.specs), ("refs", [show_loc(r) for r in request.refs]),
+             ("values", request.values), ("words", request.terms)]
+    return " · ".join(f"{name} {', '.join(items) or '—'}" for name, items in parts)
+
 
 def render(scope: str, request_line: str, tiers: Tiers) -> str:
     lines = [f"Searched: {scope}", f"Read: {request_line}", ""]

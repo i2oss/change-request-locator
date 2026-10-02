@@ -13,6 +13,9 @@ and opens with plain `sqlite3` (FTS5 is built into standard SQLite):
   embeddings        chunk_id -> float32 vector, normalised to length 1 so cosine = dot
   meta              doc, chunk_count, embed_model, embed_dim, source, built_at
 
+The local app adds the writer's marks (app/marks.py). A rebuild copies them
+into the new file, so they are never lost.
+
 The JSONL must pass the parser contract (scripts/check_chunks.py) first.
 """
 from __future__ import annotations
@@ -35,6 +38,9 @@ import check_chunks  # noqa: E402
 from locator import config  # noqa: E402
 
 Embed = Callable[[list[str]], np.ndarray]
+
+# Tables the index build doesn't make but must keep on a rebuild (app/marks.py).
+KEEP_TABLES = ("change_requests", "marks")
 
 SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -109,6 +115,7 @@ def build(chunks: list[dict], out: Path, embed: Embed, model: str, source: str =
     docs = {c["doc"] for c in chunks}
     if len(docs) != 1:
         raise ValueError(f"an index holds one doc; got {len(docs)}: {sorted(docs)}")
+    kept = _kept_tables(out, next(iter(docs)))
 
     vectors = np.asarray(embed([embed_text(c) for c in chunks]), dtype=np.float32)
     if vectors.shape[0] != len(chunks):
@@ -134,11 +141,40 @@ def build(chunks: list[dict], out: Path, embed: Embed, model: str, source: str =
         with conn:
             conn.executescript(SCHEMA)
             _insert(conn, chunks, vectors, meta)
+        if kept:
+            conn.execute("ATTACH DATABASE ? AS old", (str(out),))
+            with conn:
+                for name, sql in kept:
+                    conn.execute(sql)
+                    conn.execute(f"INSERT INTO main.{name} SELECT * FROM old.{name}")
+            conn.execute("DETACH DATABASE old")
         conn.close()
         tmp.replace(out)
     finally:
         tmp.unlink(missing_ok=True)
     return meta
+
+
+def _kept_tables(out: Path, doc: str) -> list[tuple[str, str]]:
+    """(name, CREATE sql) of the KEEP_TABLES in the old index, if there is one.
+    Refuses to replace an index of another doc that holds marks."""
+    if not out.exists():
+        return []
+    conn = sqlite3.connect(out.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        marks = ",".join("?" * len(KEEP_TABLES))
+        kept = conn.execute(f"SELECT name, sql FROM sqlite_master WHERE type = 'table'"
+                            f" AND name IN ({marks}) ORDER BY rootpage", KEEP_TABLES).fetchall()
+        if not kept:
+            return []
+        old_doc = conn.execute("SELECT value FROM meta WHERE key = 'doc'").fetchone()[0]
+        held = sum(conn.execute(f"SELECT count(*) FROM {name}").fetchone()[0] for name, _ in kept)
+    finally:
+        conn.close()
+    if old_doc != doc and held:
+        raise ValueError(f"{out} holds marks for {old_doc!r}; export them "
+                         f"(the app's Export button) and move the file before building {doc!r}")
+    return kept if old_doc == doc else []
 
 
 def _insert(conn: sqlite3.Connection, chunks: list[dict], vectors: np.ndarray, meta: dict) -> None:

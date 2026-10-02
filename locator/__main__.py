@@ -14,13 +14,6 @@ from pathlib import Path
 from locator import search, tiers
 
 
-def describe(request: search.Request) -> str:
-    """What the locator read from the request, so the writer can see what drove it."""
-    parts = [("specs", request.specs), ("refs", [tiers.show_loc(r) for r in request.refs]),
-             ("values", request.values), ("words", request.terms)]
-    return " · ".join(f"{name} {', '.join(items) or '—'}" for name, items in parts)
-
-
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m locator", description=__doc__.split("\n")[0])
     ap.add_argument("request", help="the change request text")
@@ -33,7 +26,7 @@ def main(argv: list[str] | None = None) -> None:
     with search.Index(args.db) as index:
         embed = search.query_embedder(index.meta["embed_model"])
         found = search.locate(index, request, embed=embed)
-        print(tiers.render(index.scope(), describe(request), tiers.tier(found)), end="")
+        print(tiers.render(index.scope(), tiers.describe(request), tiers.tier(found)), end="")
 
 
 if __name__ == "__main__":

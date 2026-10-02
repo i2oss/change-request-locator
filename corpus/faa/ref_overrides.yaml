@@ -8,6 +8,22 @@
 #   phrase: exact text from that chunk (the parser stops if it's missing)
 #   refs:   loc.ids the phrase points to; [] when it points inside the chunk itself
 #   note:   why
+#
+# An alias entry instead sends every ref to one loc.id to another chunk, for a
+# target the source misnumbers. The parser stops if the target has no chunk, or
+# if the alias is itself a real loc.id.
+#
+#   alias:  the loc.id refs point at
+#   target: the loc.id that really holds it
+#   note:   why
+
+# --- aliases ------------------------------------------------------------------
+
+- alias: "figure-7-29"
+  target: "figure-7-27@p354"
+  note: >-
+    the PDF misprints figure 7-29's caption as a second "FIGURE 7-27" (PDF p354,
+    clip-locking turnbuckles); 7-184 points at it as figure 7-29
 
 # --- points outside the chunk -------------------------------------------------
 

@@ -136,6 +136,35 @@ def test_rebuild_replaces_the_old_file(tmp_path):
         assert q(conn, "SELECT count(*) FROM chunks") == [(1,)]
 
 
+def test_rebuild_keeps_the_writers_marks(tmp_path):
+    """Marks live in the index file (app/marks.py); a rebuild must carry them over."""
+    from app.marks import Marks
+
+    out = tmp_path / "test.sqlite"
+    build_index.build(CHUNKS, out, embed=fake_embed, model="fake-model")
+    with Marks(out) as m:
+        rid = m.set("Made-up request.", CHUNKS[0]["loc"]["id"], "confirm", cite="TM",
+                    tier="likely", origin="direct")
+        before = m.export()
+    build_index.build(CHUNKS, out, embed=fake_embed, model="fake-model")
+    with Marks(out) as m:
+        assert m.export() == before and rid in before
+
+
+def test_rebuild_for_another_doc_refuses_to_drop_marks(tmp_path):
+    from app.marks import Marks
+
+    out = tmp_path / "test.sqlite"
+    build_index.build(CHUNKS, out, embed=fake_embed, model="fake-model")
+    with Marks(out) as m:
+        m.set("Made-up request.", CHUNKS[0]["loc"]["id"], "confirm", cite="TM")
+    other = [{**c, "doc": "Other manual"} for c in CHUNKS]
+    with pytest.raises(ValueError, match="marks"):
+        build_index.build(other, out, embed=fake_embed, model="fake-model")
+    with Marks(out) as m:
+        assert m.export()   # old file untouched
+
+
 def test_one_self_contained_file(tmp_path):
     out = tmp_path / "test.sqlite"
     build_index.build(CHUNKS, out, embed=fake_embed, model="fake-model")
