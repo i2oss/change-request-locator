@@ -1,0 +1,110 @@
+/* One token block (SPEC §7 "Look"); classes name meaning, not colour. */
+:root {
+  --bg: #f7f7f4;
+  --panel: #ffffff;
+  --ink: #1d1f21;
+  --muted: #5f6368;
+  --line: #d9d9d4;
+  --accent: #1f5fbf;
+  --confirm: #1e7d3c;
+  --reject: #b3261e;
+  --mark: #fff0a8;
+  --term: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181a;
+    --panel: #1f2224;
+    --ink: #e6e6e3;
+    --muted: #a0a4a8;
+    --line: #34383b;
+    --accent: #7aa7ff;
+    --confirm: #6fcf8f;
+    --reject: #ff8a80;
+    --mark: #5c4d00;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  max-width: 60rem;
+  padding: 1.5rem 1rem 4rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 var(--text);
+}
+
+h1 { font-size: 1.4rem; margin: 0; }
+h2 { font-size: 1.1rem; margin: 0 0 0.25rem; }
+.scope, .read, .note, .none, .export { color: var(--muted); }
+.scope, .read { font-family: var(--term); font-size: 0.85rem; margin: 0.25rem 0; }
+.note { margin: 0 0 0.75rem; font-size: 0.9rem; }
+
+.ask { display: grid; gap: 0.5rem; margin: 1.25rem 0; }
+.ask label { font-weight: 600; }
+textarea, input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+}
+button {
+  justify-self: start;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.ask button { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+
+.tier, .missed { margin: 1.75rem 0; }
+.count { color: var(--muted); font-weight: 400; }
+.spots { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+
+.spot {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+}
+.spot.direct { border-left-color: var(--accent); }
+.spot[data-verdict="confirm"] { border-color: var(--confirm); border-left-width: 4px; }
+.spot[data-verdict="reject"] { border-color: var(--reject); opacity: 0.7; }
+
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.origin {
+  font-family: var(--term);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  padding: 0 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--muted);
+}
+.cite { font-weight: 600; }
+.marking { margin-left: auto; display: flex; gap: 0.35rem; }
+.spot[data-verdict="confirm"] button.confirm { background: var(--confirm); border-color: var(--confirm); color: var(--bg); }
+.spot[data-verdict="reject"] button.reject { background: var(--reject); border-color: var(--reject); color: var(--bg); }
+
+.why { margin: 0.35rem 0 0.2rem; font-size: 0.9rem; color: var(--muted); }
+.snippet { margin: 0; font-family: var(--term); font-size: 0.85rem; overflow-wrap: anywhere; }
+mark { background: var(--mark); color: inherit; padding: 0 1px; }
+
+.add-missed { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.add-missed input { width: 12rem; }
+.missed-list { padding-left: 1.2rem; }
+.missed-list li { margin: 0.3rem 0; }
+.error { color: var(--reject); }
+.empty { font-weight: 600; }
+a { color: var(--accent); }

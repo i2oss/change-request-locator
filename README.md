@@ -56,6 +56,23 @@ python -m pytest tests/test_search.py tests/test_tiers.py tests/test_locator_faa
 - The knobs (how many spots to keep, where the tier cutoffs sit) are constants at the top of each file. Tune them on the eval's tune split only.
 - The smoke tests use made-up requests only. Requests from the 2024 FAA edits are the eval set; never test or tune on them.
 
+## Local app (build step 2)
+
+```sh
+flask --app app run                           # http://127.0.0.1:5000, against build/faa.sqlite
+LOCATOR_DB=build/other.sqlite flask --app app run
+flask --app app import-marks marks.jsonl      # load an export back in
+python -m pytest tests/test_marks.py tests/test_app.py
+```
+
+- One page: paste a change request, see what was searched, then the spots in **Likely** and **Check these**. Each spot is labelled direct or ripple and shows its citation, "why" line and a highlighted snippet.
+- Mark each spot **Confirm** or **Reject** (click again to clear), and **Add missed** spots by typing their paragraph, table or figure (`7-144`, `table 7-4`, `figure 7-9`).
+- Marks save as you click, into two tables in the corpus SQLite file (`change_requests`, `marks`). A change request's id is a hash of its text, so pasting the same request again brings its marks back.
+- **Export** downloads marks as JSONL (one request, or all). `import-marks` reads an export back in.
+- Rebuilding the index keeps the marks: `scripts/build_index.py` copies them into the new file.
+- The first search loads the embedding model (a few seconds); later ones take well under a second.
+- Single writer, local only: no login and no multi-user support.
+
 ## Adding a format
 
 Every manual format gets one parser; the locator only ever reads chunks.
