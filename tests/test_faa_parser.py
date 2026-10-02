@@ -43,6 +43,33 @@ def test_norm_spec(raw, want):
     assert faa_pdf.norm_spec(raw) == want
 
 
+def made_up(loc_id, text):
+    return {"loc": {"id": loc_id}, "text": text, "extra": {}}
+
+
+def test_alias_maps_a_misprinted_target_to_the_real_chunk():
+    """An alias in ref_overrides.yaml sends refs to a missing target to the chunk
+    that really holds it (a misprinted caption keyed under another number)."""
+    chunks = [made_up("2-1", "Fit the clip as shown in figure 2-9."),
+              made_up("figure-2-8@p40", "FIGURE 2-8. Fitting the clip.")]
+    aliases = [{"alias": "figure-2-9", "target": "figure-2-8@p40", "note": "misprint"}]
+    faa_pdf.add_refs_and_specs(chunks, aliases)
+    assert chunks[0]["refs_out"] == ["figure-2-8@p40"]
+
+
+def test_alias_to_a_missing_target_stops_the_parser():
+    chunks = [made_up("2-1", "See figure 2-9.")]
+    with pytest.raises(SystemExit, match="figure-2-8@p40"):
+        faa_pdf.add_refs_and_specs(chunks, [{"alias": "figure-2-9", "target": "figure-2-8@p40"}])
+
+
+def test_alias_over_a_real_chunk_stops_the_parser():
+    chunks = [made_up("2-1", "See figure 2-9."), made_up("figure-2-9", "FIGURE 2-9."),
+              made_up("figure-2-8", "FIGURE 2-8.")]
+    with pytest.raises(SystemExit, match="figure-2-9"):
+        faa_pdf.add_refs_and_specs(chunks, [{"alias": "figure-2-9", "target": "figure-2-8"}])
+
+
 # ---------------------------------------------------------------- whole PDF
 
 @pytest.fixture(scope="session")
@@ -99,6 +126,12 @@ def test_ref_override_page_reference(by_loc):
     assert by_loc["7-2"]["refs_out"] == ["4-57f"]
 
 
+def test_ref_override_alias_misprinted_figure(by_loc):
+    """PDF p354 captions figure 7-29 as a second FIGURE 7-27 (issue #8)."""
+    assert "figure-7-27@p354" in by_loc["7-184"]["refs_out"]
+    assert "figure-7-29" not in by_loc["7-184"]["refs_out"]
+
+
 def test_cleanup(chunks):
     pages = {c["extra"]["pdf_page"] for c in chunks}
     assert not pages & faa_pdf.DUP_PAGES, "duplicate pages 67-75 must be dropped"
@@ -119,4 +152,4 @@ def test_contract(chunks):
     assert errors == []
     assert 1150 <= len(chunks) <= 1350
     # known source defects (see build/unresolved_refs.md); anything new is a regression
-    assert {u["ref"] for u in unresolved} <= {"figure-3-14", "figure-7-23", "figure-7-29"}
+    assert {u["ref"] for u in unresolved} == {"figure-3-14", "figure-7-23"}

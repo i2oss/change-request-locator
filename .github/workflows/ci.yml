@@ -9,9 +9,9 @@ jobs:
   faa-chunks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -20,7 +20,7 @@ jobs:
 
       # The FAA PDF is never committed. Cache it by the pinned hash so CI
       # doesn't download 21 MB from faa.gov on every run.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: corpus/faa/*.pdf
           key: faa-pdf-${{ hashFiles('corpus/faa/fetch.py') }}
@@ -36,7 +36,7 @@ jobs:
 
       # The embedding model (~130 MB) comes from Hugging Face. Cache it by the
       # config file that names it, so changing the model refreshes the cache.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface
           key: hf-model-${{ hashFiles('locator/config.py') }}
@@ -50,7 +50,7 @@ jobs:
           REQUIRE_PDF: "1"
           REQUIRE_INDEX: "1"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: faa-chunks

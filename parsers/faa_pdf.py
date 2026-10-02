@@ -580,9 +580,20 @@ class Resolver:
 
 
 def add_refs_and_specs(chunks: list[dict], overrides: list[dict]) -> list[dict]:
-    """Fill refs_out/specs. Returns relative-ref phrases not covered by an override."""
+    """Fill refs_out/specs. Returns relative-ref phrases not covered by an override.
+
+    An override is either a phrase fix (chunk/phrase/refs) or an alias
+    (alias/target): every ref to the alias goes to the target instead.
+    """
     res = Resolver(chunks)
     by_loc = {c["loc"]["id"]: c for c in chunks}
+    aliases = {o["alias"]: o["target"] for o in overrides if "alias" in o}
+    for alias, target in aliases.items():
+        if alias in by_loc:
+            sys.exit(f"ref_overrides.yaml: alias {alias!r} is a real loc.id; it would hide it")
+        if target not in by_loc:
+            sys.exit(f"ref_overrides.yaml: alias target {target!r} has no chunk")
+    overrides = [o for o in overrides if "alias" not in o]
     covered = set()
     for o in overrides:
         c = by_loc.get(o["chunk"])
@@ -598,12 +609,13 @@ def add_refs_and_specs(chunks: list[dict], overrides: list[dict]) -> list[dict]:
         for m in REF_RE.finditer(c["text"]):
             for rid in expand_ids(m.group("kind"), m.group("ids")):
                 t = res.target(m.group("kind"), rid)
+                t = aliases.get(t, t)
                 raw.append(f"{m.group('kind').lower()} {rid}")
                 if t != own and not own.startswith(t + "#") and t not in refs:
                     refs.append(t)
         for o in overrides:
             if o["chunk"] == own:
-                refs += [r for r in o["refs"] if r not in refs]
+                refs += [r for r in (aliases.get(r, r) for r in o["refs"]) if r not in refs]
         c["refs_out"] = refs
         if raw:
             c["extra"]["refs_raw"] = raw
